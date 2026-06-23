@@ -27,6 +27,7 @@ class NavigateRequest(BaseModel):
 
     zoneID: str = Field(..., min_length=1, description="Station zone ID")
     query: str = Field(..., description="User's navigation query (max 500 chars)")
+    handicapped: bool = Field(False, description="Whether to compute a barrier-free route")
 
     @field_validator("query")
     @classmethod
@@ -117,6 +118,7 @@ async def navigate(body: NavigateRequest, request: Request):
         instructions, route_segments, enriched_segments = await orchestrator.navigate_with_route(
             query=body.query,
             zone_id=body.zoneID,
+            handicapped=body.handicapped,
         )
 
         from pipeline.turn_detector import detect_turns, _rdp_simplify

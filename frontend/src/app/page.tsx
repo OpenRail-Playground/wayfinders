@@ -12,6 +12,7 @@ const RouteMap = dynamic(() => import('../components/RouteMap'), { ssr: false })
 
 export default function Home() {
   const [selectedZoneID, setSelectedZoneID] = useState('');
+  const [handicapped, setHandicapped] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [instructions, setInstructions] = useState<string[]>([]);
   const [route, setRoute] = useState<RouteSegment[]>([]);
@@ -32,7 +33,7 @@ export default function Home() {
       const response = await fetch('/api/navigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ zoneID: selectedZoneID, query }),
+        body: JSON.stringify({ zoneID: selectedZoneID, query, handicapped }),
         signal: controller.signal,
       });
 
@@ -89,6 +90,28 @@ export default function Home() {
           onSubmit={handleSubmit}
           isLoading={isLoading}
         />
+
+        <div className="flex items-center gap-3">
+          <label htmlFor="handicapped-toggle" className="text-sm font-medium cursor-pointer">
+            Barrierefreie Route
+          </label>
+          <button
+            id="handicapped-toggle"
+            role="switch"
+            type="button"
+            aria-checked={handicapped}
+            onClick={() => setHandicapped(!handicapped)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+              handicapped ? 'bg-blue-600' : 'bg-gray-300'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                handicapped ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
 
         <RouteMap route={route} turnPoints={turnPoints} />
 

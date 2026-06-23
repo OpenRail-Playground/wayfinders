@@ -1,6 +1,7 @@
 export interface NavigateRequest {
   zoneID: string;
   query: string;
+  handicapped: boolean;
 }
 
 export interface RoutePoint {

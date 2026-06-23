@@ -69,14 +69,14 @@ class NavigationOrchestrator:
         self._landmark_enricher = LandmarkEnricher()
         self._description_generator = DescriptionGenerator(genai_client)
 
-    async def navigate(self, query: str, zone_id: str) -> list[str]:
+    async def navigate(self, query: str, zone_id: str, handicapped: bool = False) -> list[str]:
         """
         Execute the full navigation pipeline. Returns instructions only.
         """
-        instructions, _segments = await self.navigate_with_route(query, zone_id)
+        instructions, _segments, _enriched = await self.navigate_with_route(query, zone_id, handicapped)
         return instructions
 
-    async def navigate_with_route(self, query: str, zone_id: str) -> tuple[list[str], list, list]:
+    async def navigate_with_route(self, query: str, zone_id: str, handicapped: bool = False) -> tuple[list[str], list, list]:
         """
         Execute the full navigation pipeline.
 
@@ -89,11 +89,11 @@ class NavigationOrchestrator:
         try:
             if HARD_TIMEOUT_SECONDS is not None:
                 return await asyncio.wait_for(
-                    self._run_pipeline(query, zone_id),
+                    self._run_pipeline(query, zone_id, handicapped),
                     timeout=HARD_TIMEOUT_SECONDS,
                 )
             else:
-                return await self._run_pipeline(query, zone_id)
+                return await self._run_pipeline(query, zone_id, handicapped)
         except asyncio.TimeoutError:
             logger.error(
                 "Navigation pipeline hard timeout exceeded (%.1fs) for zone %s",
@@ -105,7 +105,7 @@ class NavigationOrchestrator:
                 user_message="Anfrage hat zu lange gedauert",
             )
 
-    async def _run_pipeline(self, query: str, zone_id: str) -> tuple[list[str], list, list]:
+    async def _run_pipeline(self, query: str, zone_id: str, handicapped: bool = False) -> tuple[list[str], list, list]:
         """
         Internal pipeline execution, wrapped by navigate() with a hard timeout.
         """
@@ -129,11 +129,12 @@ class NavigationOrchestrator:
             logger.info("[Step 2 POIResolver] Output: start=%s, dest=%s", start_pos, dest_pos)
 
             # Step 3: Compute route
-            logger.info("[Step 3 RouteComputer] Input: start=%s, dest=%s, zone=%s", start_pos, dest_pos, zone_id)
+            logger.info("[Step 3 RouteComputer] Input: start=%s, dest=%s, zone=%s, handicapped=%s", start_pos, dest_pos, zone_id, handicapped)
             route_segments = await self._route_computer.compute_route(
                 start=start_pos,
                 destination=dest_pos,
                 zone_id=zone_id,
+                handicapped=handicapped,
             )
             logger.info("[Step 3 RouteComputer] Output: %d segments", len(route_segments))
 

@@ -73,6 +73,7 @@ class RouteComputer:
         start: Position,
         destination: Position,
         zone_id: str,
+        handicapped: bool = False,
     ) -> list[RouteSegment]:
         """
         Compute an indoor route between start and destination.
@@ -81,6 +82,7 @@ class RouteComputer:
             start: The starting position (lat, lon, level)
             destination: The destination position (lat, lon, level)
             zone_id: The station's zone ID
+            handicapped: Whether to compute a barrier-free route
 
         Returns:
             Ordered list of RouteSegment objects from start to destination
@@ -97,6 +99,7 @@ class RouteComputer:
                 to_level=destination.level,
                 to_lat=destination.lat,
                 to_lon=destination.lon,
+                handicapped=handicapped,
             )
         except RISMapsNoContentError:
             raise RouteComputerError(

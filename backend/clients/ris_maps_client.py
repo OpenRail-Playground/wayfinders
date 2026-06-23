@@ -230,6 +230,7 @@ class RISMapsClient:
         to_level: str,
         to_lat: float,
         to_lon: float,
+        handicapped: bool = False,
     ) -> dict[str, Any]:
         """
         Compute an indoor route between two positions.
@@ -245,6 +246,7 @@ class RISMapsClient:
             to_level: Destination level (LevelEnum value)
             to_lat: Destination latitude
             to_lon: Destination longitude
+            handicapped: Whether to compute a barrier-free route
 
         Returns:
             GeoJSON FeatureCollection with route segments
@@ -263,7 +265,7 @@ class RISMapsClient:
             "toLevel": to_level,
             "toLat": str(to_lat),
             "toLon": str(to_lon),
-            "handicapped": "false",
+            "handicapped": "true" if handicapped else "false",
         }
         return await self._request(
             "GET", "/station/routing/indoor/byposition.geojson", params=params
