@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import time
 from typing import Optional
 
@@ -41,25 +40,6 @@ SOFT_TARGET_SECONDS = 15.0
 
 # Hard timeout: None = no timeout
 HARD_TIMEOUT_SECONDS = None
-
-
-def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Distance in meters between two (lat, lon) points."""
-    R = 6_371_000.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-
-def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Bearing in degrees (0=N, 90=E, 180=S, 270=W) from point 1 to point 2."""
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dlam = math.radians(lon2 - lon1)
-    x = math.sin(dlam) * math.cos(phi2)
-    y = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlam)
-    return (math.degrees(math.atan2(x, y)) + 360) % 360
 
 
 class OrchestratorError(Exception):
@@ -156,19 +136,6 @@ class NavigationOrchestrator:
                 zone_id=zone_id,
             )
             logger.info("[Step 3 RouteComputer] Output: %d segments", len(route_segments))
-            for i, seg in enumerate(route_segments):
-                start_coord = seg.polyline[0] if seg.polyline else None
-                end_coord = seg.polyline[-1] if seg.polyline else None
-                logger.info("  Segment %d: %s %s %.1fm -> %s | start=%s end=%s",
-                    i + 1, seg.segment_type, seg.level, seg.length_m, seg.target_level,
-                    start_coord, end_coord)
-                for j in range(len(seg.polyline) - 1):
-                    lon1, lat1 = seg.polyline[j]
-                    lon2, lat2 = seg.polyline[j + 1]
-                    dist = _haversine(lat1, lon1, lat2, lon2)
-                    bearing = _bearing(lat1, lon1, lat2, lon2)
-                    logger.info("    %s -> %s  dist=%.1fm  bearing=%.0f°",
-                        seg.polyline[j], seg.polyline[j + 1], dist, bearing)
 
             # Step 4: Enrich with landmarks
             pois, platforms = await self._fetch_pois_and_platforms(zone_id)
