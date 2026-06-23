@@ -221,6 +221,46 @@ class RISMapsClient:
         """
         return await self._request("GET", f"/station/platform/DB/{zone_id}")
 
+    async def get_platform_sectors(self, zone_id: str) -> dict[str, Any]:
+        """
+        Fetch platform sectors (A, B, C, ...) for a given station zone.
+
+        Endpoint: GET /station/platform/DB/{zoneID}/sectors/geojson
+
+        Args:
+            zone_id: The station's zone ID
+
+        Returns:
+            GeoJSON FeatureCollection with sector features
+
+        Raises:
+            RISMapsNoContentError: If no sectors found for this zone
+            RISMapsClientError: On 4xx errors
+            RISMapsServerError: On 5xx errors
+            RISMapsTimeoutError: On timeout
+        """
+        return await self._request("GET", f"/station/platform/DB/{zone_id}/sectors/geojson")
+
+    async def get_buildings(self, zone_id: str) -> dict[str, Any]:
+        """
+        Fetch building footprints for a given station zone.
+
+        Endpoint: GET /station/building/DB/zoneid/{zoneID}
+
+        Args:
+            zone_id: The station's zone ID
+
+        Returns:
+            JSON response containing building list with geometry
+
+        Raises:
+            RISMapsNoContentError: If no buildings found for this zone
+            RISMapsClientError: On 4xx errors
+            RISMapsServerError: On 5xx errors
+            RISMapsTimeoutError: On timeout
+        """
+        return await self._request("GET", f"/station/building/DB/zoneid/{zone_id}")
+
     async def get_indoor_route(
         self,
         zone_id: str,

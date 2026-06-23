@@ -14,7 +14,7 @@ from pipeline.description_generator import (
     SYSTEM_PROMPT,
     _display_level,
 )
-from pipeline.models import EnrichedSegment, POI, RouteSegment
+from pipeline.models import NavigationLeg, POI
 from clients.genai_client import GenAIClient, GenAITimeoutError, GenAIServiceError
 
 
@@ -30,34 +30,6 @@ def mock_genai_client():
 def generator(mock_genai_client):
     """Create a DescriptionGenerator with a mocked GenAI client."""
     return DescriptionGenerator(mock_genai_client)
-
-
-def _make_walk_segment(
-    level: str = "GROUND_FLOOR",
-    length_m: float = 50.0,
-) -> RouteSegment:
-    return RouteSegment(
-        segment_type="WALK",
-        level=level,
-        length_m=length_m,
-        polyline=[(8.6637, 50.1073), (8.6640, 50.1075)],
-        target_level=None,
-    )
-
-
-def _make_level_change_segment(
-    segment_type: str = "ESCALATOR",
-    level: str = "GROUND_FLOOR",
-    target_level: str = "BASEMENT_FLOOR_1",
-    length_m: float = 12.0,
-) -> RouteSegment:
-    return RouteSegment(
-        segment_type=segment_type,
-        level=level,
-        length_m=length_m,
-        polyline=[(8.6637, 50.1073)],
-        target_level=target_level,
-    )
 
 
 def _make_poi(
@@ -77,54 +49,62 @@ def _make_poi(
     )
 
 
-def _make_enriched_segment_with_landmark(
-    segment: Optional[RouteSegment] = None,
+def _make_walk_leg(
+    level: str = "GROUND_FLOOR",
+    length_m: float = 50.0,
     poi: Optional[POI] = None,
-    distance: float = 5.0,
-) -> EnrichedSegment:
-    return EnrichedSegment(
-        segment=segment or _make_walk_segment(),
-        landmark_poi=poi or _make_poi(),
-        landmark_distance_m=distance,
-        fallback_cue=None,
+    fallback_cue: Optional[str] = None,
+    turn_direction: Optional[str] = None,
+    angle_change: float = 0.0,
+) -> NavigationLeg:
+    return NavigationLeg(
+        leg_type="WALK",
+        level=level,
+        length_m=length_m,
+        destination_poi=poi or _make_poi(),
+        destination_fallback=fallback_cue,
+        turn_direction=turn_direction,
+        angle_change=angle_change,
     )
 
 
-def _make_enriched_segment_with_fallback(
-    segment: Optional[RouteSegment] = None,
+def _make_walk_leg_with_fallback(
+    level: str = "GROUND_FLOOR",
+    length_m: float = 50.0,
     fallback_cue: str = "Korridor",
-) -> EnrichedSegment:
-    return EnrichedSegment(
-        segment=segment or _make_walk_segment(),
-        landmark_poi=None,
-        landmark_distance_m=0.0,
-        fallback_cue=fallback_cue,
+) -> NavigationLeg:
+    return NavigationLeg(
+        leg_type="WALK",
+        level=level,
+        length_m=length_m,
+        destination_poi=None,
+        destination_fallback=fallback_cue,
     )
 
 
-def _make_enriched_level_change(
-    segment_type: str = "ESCALATOR",
+def _make_level_change_leg(
+    leg_type: str = "ESCALATOR",
+    level: str = "GROUND_FLOOR",
     target_level: str = "BASEMENT_FLOOR_1",
-) -> EnrichedSegment:
-    return EnrichedSegment(
-        segment=_make_level_change_segment(
-            segment_type=segment_type, target_level=target_level
-        ),
-        landmark_poi=None,
-        landmark_distance_m=0.0,
-        fallback_cue=None,
+    length_m: float = 12.0,
+) -> NavigationLeg:
+    return NavigationLeg(
+        leg_type=leg_type,
+        level=level,
+        length_m=length_m,
+        target_level=target_level,
     )
 
 
 @pytest.mark.asyncio
 async def test_generate_single_walk_segment_with_landmark(generator, mock_genai_client):
-    """Test generating instruction for a single walk segment with POI landmark."""
+    """Test generating instruction for a single walk leg with POI landmark."""
     mock_genai_client.complete.return_value = json.dumps(
         ["Gehen Sie Richtung Starbucks (ca. 50m)."]
     )
 
-    segments = [_make_enriched_segment_with_landmark()]
-    result = await generator.generate(segments)
+    legs = [_make_walk_leg()]
+    result = await generator.generate(legs)
 
     assert len(result) == 1
     assert "Starbucks" in result[0]
@@ -132,13 +112,13 @@ async def test_generate_single_walk_segment_with_landmark(generator, mock_genai_
 
 @pytest.mark.asyncio
 async def test_generate_single_walk_segment_with_fallback(generator, mock_genai_client):
-    """Test generating instruction for a walk segment with fallback cue."""
+    """Test generating instruction for a walk leg with fallback cue."""
     mock_genai_client.complete.return_value = json.dumps(
         ["Gehen Sie den Korridor entlang (ca. 50m)."]
     )
 
-    segments = [_make_enriched_segment_with_fallback(fallback_cue="Korridor")]
-    result = await generator.generate(segments)
+    legs = [_make_walk_leg_with_fallback(fallback_cue="Korridor")]
+    result = await generator.generate(legs)
 
     assert len(result) == 1
     assert "Korridor" in result[0]
@@ -146,13 +126,13 @@ async def test_generate_single_walk_segment_with_fallback(generator, mock_genai_
 
 @pytest.mark.asyncio
 async def test_generate_level_change_segment(generator, mock_genai_client):
-    """Test generating instruction for a level-change segment."""
+    """Test generating instruction for a level-change leg."""
     mock_genai_client.complete.return_value = json.dumps(
         ["Nehmen Sie die Rolltreppe hinunter zum Untergeschoss 1."]
     )
 
-    segments = [_make_enriched_level_change(segment_type="ESCALATOR", target_level="BASEMENT_FLOOR_1")]
-    result = await generator.generate(segments)
+    legs = [_make_level_change_leg(leg_type="ESCALATOR", target_level="BASEMENT_FLOOR_1")]
+    result = await generator.generate(legs)
 
     assert len(result) == 1
     assert "Rolltreppe" in result[0] or "Untergeschoss" in result[0]
@@ -160,29 +140,28 @@ async def test_generate_level_change_segment(generator, mock_genai_client):
 
 @pytest.mark.asyncio
 async def test_generate_multiple_segments(generator, mock_genai_client):
-    """Test generating instructions for multiple segments."""
+    """Test generating instructions for multiple legs."""
     mock_genai_client.complete.return_value = json.dumps([
         "Gehen Sie Richtung Starbucks (ca. 50m).",
         "Nehmen Sie die Rolltreppe hinunter zum Untergeschoss 1.",
         "Gehen Sie den Korridor entlang (ca. 30m).",
     ])
 
-    segments = [
-        _make_enriched_segment_with_landmark(),
-        _make_enriched_level_change(),
-        _make_enriched_segment_with_fallback(
-            segment=_make_walk_segment(level="BASEMENT_FLOOR_1", length_m=30.0),
-            fallback_cue="Korridor",
+    legs = [
+        _make_walk_leg(),
+        _make_level_change_leg(),
+        _make_walk_leg_with_fallback(
+            level="BASEMENT_FLOOR_1", length_m=30.0, fallback_cue="Korridor",
         ),
     ]
-    result = await generator.generate(segments)
+    result = await generator.generate(legs)
 
     assert len(result) == 3
 
 
 @pytest.mark.asyncio
 async def test_generate_empty_segments_returns_empty_list(generator, mock_genai_client):
-    """Test that empty segment list returns empty instructions without LLM call."""
+    """Test that empty leg list returns empty instructions without LLM call."""
     result = await generator.generate([])
 
     assert result == []
@@ -194,7 +173,7 @@ async def test_generate_passes_system_prompt(generator, mock_genai_client):
     """Test that the system prompt is passed to the LLM."""
     mock_genai_client.complete.return_value = json.dumps(["Instruction."])
 
-    await generator.generate([_make_enriched_segment_with_landmark()])
+    await generator.generate([_make_walk_leg()])
 
     call_kwargs = mock_genai_client.complete.call_args[1]
     assert call_kwargs["system_message"] == SYSTEM_PROMPT
@@ -206,8 +185,8 @@ async def test_generate_user_prompt_includes_landmark_name(generator, mock_genai
     mock_genai_client.complete.return_value = json.dumps(["Instruction."])
 
     poi = _make_poi(name="DB Lounge")
-    segments = [_make_enriched_segment_with_landmark(poi=poi)]
-    await generator.generate(segments)
+    legs = [_make_walk_leg(poi=poi)]
+    await generator.generate(legs)
 
     call_kwargs = mock_genai_client.complete.call_args[1]
     user_msg = call_kwargs["messages"][0]["content"][0]["text"]
@@ -216,11 +195,11 @@ async def test_generate_user_prompt_includes_landmark_name(generator, mock_genai
 
 @pytest.mark.asyncio
 async def test_generate_user_prompt_includes_facility_and_target_level(generator, mock_genai_client):
-    """Test that level-change segments include facility type and target level."""
+    """Test that level-change legs include facility type and target level."""
     mock_genai_client.complete.return_value = json.dumps(["Instruction."])
 
-    segments = [_make_enriched_level_change(segment_type="ELEVATOR", target_level="UPPER_FLOOR_1")]
-    await generator.generate(segments)
+    legs = [_make_level_change_leg(leg_type="ELEVATOR", target_level="UPPER_FLOOR_1")]
+    await generator.generate(legs)
 
     call_kwargs = mock_genai_client.complete.call_args[1]
     user_msg = call_kwargs["messages"][0]["content"][0]["text"]
@@ -234,7 +213,7 @@ async def test_generate_raises_error_on_genai_timeout(generator, mock_genai_clie
     mock_genai_client.complete.side_effect = GenAITimeoutError("Request timed out")
 
     with pytest.raises(DescriptionGeneratorError) as exc_info:
-        await generator.generate([_make_enriched_segment_with_landmark()])
+        await generator.generate([_make_walk_leg()])
 
     assert exc_info.value.user_message == "KI-Service ist vorübergehend nicht verfügbar"
 
@@ -245,7 +224,7 @@ async def test_generate_raises_error_on_genai_service_error(generator, mock_gena
     mock_genai_client.complete.side_effect = GenAIServiceError("503 error", status_code=503)
 
     with pytest.raises(DescriptionGeneratorError) as exc_info:
-        await generator.generate([_make_enriched_segment_with_landmark()])
+        await generator.generate([_make_walk_leg()])
 
     assert exc_info.value.user_message == "KI-Service ist vorübergehend nicht verfügbar"
 
@@ -256,7 +235,7 @@ async def test_generate_raises_error_on_invalid_json(generator, mock_genai_clien
     mock_genai_client.complete.return_value = "This is not JSON"
 
     with pytest.raises(DescriptionGeneratorError) as exc_info:
-        await generator.generate([_make_enriched_segment_with_landmark()])
+        await generator.generate([_make_walk_leg()])
 
     assert "konnte nicht erstellt werden" in exc_info.value.user_message
 
@@ -267,7 +246,7 @@ async def test_generate_raises_error_on_non_array_json(generator, mock_genai_cli
     mock_genai_client.complete.return_value = '{"instruction": "Walk ahead"}'
 
     with pytest.raises(DescriptionGeneratorError) as exc_info:
-        await generator.generate([_make_enriched_segment_with_landmark()])
+        await generator.generate([_make_walk_leg()])
 
     assert "konnte nicht erstellt werden" in exc_info.value.user_message
 
@@ -279,8 +258,8 @@ async def test_generate_handles_markdown_code_block(generator, mock_genai_client
         '```json\n["Gehen Sie Richtung Starbucks."]\n```'
     )
 
-    segments = [_make_enriched_segment_with_landmark()]
-    result = await generator.generate(segments)
+    legs = [_make_walk_leg()]
+    result = await generator.generate(legs)
 
     assert len(result) == 1
     assert "Starbucks" in result[0]
@@ -288,14 +267,14 @@ async def test_generate_handles_markdown_code_block(generator, mock_genai_client
 
 @pytest.mark.asyncio
 async def test_generate_pads_if_too_few_instructions(generator, mock_genai_client):
-    """Test that fewer instructions than segments are padded."""
+    """Test that fewer instructions than legs are padded."""
     mock_genai_client.complete.return_value = json.dumps(["Only one instruction."])
 
-    segments = [
-        _make_enriched_segment_with_landmark(),
-        _make_enriched_segment_with_fallback(),
+    legs = [
+        _make_walk_leg(),
+        _make_walk_leg_with_fallback(),
     ]
-    result = await generator.generate(segments)
+    result = await generator.generate(legs)
 
     assert len(result) == 2
     assert result[0] == "Only one instruction."
@@ -304,15 +283,15 @@ async def test_generate_pads_if_too_few_instructions(generator, mock_genai_clien
 
 @pytest.mark.asyncio
 async def test_generate_truncates_if_too_many_instructions(generator, mock_genai_client):
-    """Test that more instructions than segments are truncated."""
+    """Test that more instructions than legs are truncated."""
     mock_genai_client.complete.return_value = json.dumps([
         "Instruction 1.",
         "Instruction 2.",
         "Instruction 3.",
     ])
 
-    segments = [_make_enriched_segment_with_landmark()]
-    result = await generator.generate(segments)
+    legs = [_make_walk_leg()]
+    result = await generator.generate(legs)
 
     assert len(result) == 1
     assert result[0] == "Instruction 1."
@@ -323,8 +302,8 @@ async def test_generate_handles_whitespace_in_response(generator, mock_genai_cli
     """Test that leading/trailing whitespace in response is handled."""
     mock_genai_client.complete.return_value = '  \n["Gehen Sie geradeaus."]\n  '
 
-    segments = [_make_enriched_segment_with_landmark()]
-    result = await generator.generate(segments)
+    legs = [_make_walk_leg()]
+    result = await generator.generate(legs)
 
     assert len(result) == 1
     assert result[0] == "Gehen Sie geradeaus."
@@ -337,8 +316,8 @@ async def test_generate_stairs_segment(generator, mock_genai_client):
         ["Nehmen Sie die Treppe hoch zum Obergeschoss 1."]
     )
 
-    segments = [_make_enriched_level_change(segment_type="STAIRS", target_level="UPPER_FLOOR_1")]
-    result = await generator.generate(segments)
+    legs = [_make_level_change_leg(leg_type="STAIRS", target_level="UPPER_FLOOR_1")]
+    result = await generator.generate(legs)
 
     assert len(result) == 1
 
@@ -348,8 +327,8 @@ async def test_generate_user_prompt_includes_fallback_cue(generator, mock_genai_
     """Test that the user prompt includes fallback cue when no landmark."""
     mock_genai_client.complete.return_value = json.dumps(["Instruction."])
 
-    segments = [_make_enriched_segment_with_fallback(fallback_cue="Gleis 5/6")]
-    await generator.generate(segments)
+    legs = [_make_walk_leg_with_fallback(fallback_cue="Gleis 5/6")]
+    await generator.generate(legs)
 
     call_kwargs = mock_genai_client.complete.call_args[1]
     user_msg = call_kwargs["messages"][0]["content"][0]["text"]

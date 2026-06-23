@@ -11,8 +11,8 @@ from __future__ import annotations
 import math
 import logging
 
-from pipeline.landmark_enricher import haversine_distance
-from pipeline.models import EnrichedSegment, NavigationLeg, POI, TurnLandmark
+from pipeline.landmark_enricher import haversine_distance, EXIT_CATEGORIES
+from pipeline.models import BuildingPolygon, EnrichedSegment, NavigationLeg, POI, TurnLandmark
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ def build_legs(enriched_segments: list[EnrichedSegment]) -> list[NavigationLeg]:
                 destination_fallback=None,
                 turn_direction=None,
                 angle_change=0.0,
+                polyline=seg.polyline,
             ))
             continue
 
@@ -57,6 +58,7 @@ def build_legs(enriched_segments: list[EnrichedSegment]) -> list[NavigationLeg]:
                 destination_fallback=enriched.fallback_cue,
                 turn_direction=None,
                 angle_change=0.0,
+                polyline=seg.polyline,
             ))
             continue
 
@@ -81,6 +83,7 @@ def build_legs(enriched_segments: list[EnrichedSegment]) -> list[NavigationLeg]:
                 destination_fallback=wp["fallback"],
                 turn_direction=turn_dir,
                 angle_change=angle,
+                polyline=wp.get("polyline", []),
             ))
 
     logger.info("Built %d navigation legs from %d segments", len(legs), len(enriched_segments))
@@ -90,7 +93,7 @@ def build_legs(enriched_segments: list[EnrichedSegment]) -> list[NavigationLeg]:
 def _build_waypoints(seg, enriched: EnrichedSegment) -> list[dict]:
     """
     Build waypoint list: each waypoint represents a leg destination.
-    Returns list of dicts with: poi, fallback, distance_m, angle_to_next.
+    Returns list of dicts with: poi, fallback, distance_m, angle_to_next, polyline.
     """
     polyline = seg.polyline
     turns = enriched.turn_landmarks
@@ -112,6 +115,7 @@ def _build_waypoints(seg, enriched: EnrichedSegment) -> list[dict]:
             "fallback": tl.fallback_cue,
             "distance_m": dist,
             "angle_to_next": tl.angle_change,
+            "polyline": polyline[prev_idx:t_idx + 1],
         })
         prev_idx = t_idx
 
@@ -123,6 +127,7 @@ def _build_waypoints(seg, enriched: EnrichedSegment) -> list[dict]:
         "fallback": enriched.fallback_cue,
         "distance_m": dist,
         "angle_to_next": 0.0,
+        "polyline": polyline[prev_idx:end_idx + 1],
     })
 
     return destinations
@@ -162,3 +167,132 @@ def _angle_to_direction(angle_change: float) -> str:
         return "rechts"  # clockwise = right turn
     else:
         return "links"   # counter-clockwise = left turn
+
+
+def apply_exit_overrides(
+    legs: list[NavigationLeg],
+    pois: list[POI],
+    buildings: list[BuildingPolygon],
+) -> list[NavigationLeg]:
+    """
+    Post-process legs to override the destination with an exit POI
+    when a leg transitions from inside a building to outside.
+
+    This runs after build_legs so each leg's polyline is checked individually,
+    ensuring that the specific leg crossing the building boundary gets the
+    exit hint — not the whole segment.
+
+    Args:
+        legs: Built navigation legs (with polylines).
+        pois: All POIs for the station.
+        buildings: Building footprint polygons.
+
+    Returns:
+        The same list of legs, with exit overrides applied in-place.
+    """
+    if not buildings:
+        return legs
+
+    from pipeline.landmark_enricher import _point_in_polygon, _point_in_any_building
+
+    # Collect exit POIs (ENTRANCE_EXIT or Exit category)
+    exit_pois = [p for p in pois if p.category in EXIT_CATEGORIES]
+    if not exit_pois:
+        return legs
+
+    for leg in legs:
+        if leg.leg_type != "WALK" or len(leg.polyline) < 2:
+            continue
+
+        start_lon, start_lat = leg.polyline[0]
+        end_lon, end_lat = leg.polyline[-1]
+
+        start_inside = _point_in_any_building(start_lat, start_lon, buildings)
+        end_inside = _point_in_any_building(end_lat, end_lon, buildings)
+
+        if start_inside and not end_inside:
+            # This leg leaves a building — find the nearest exit POI on this level
+            best_exit = None
+            best_dist = float("inf")
+            for exit_poi in exit_pois:
+                if exit_poi.level != leg.level:
+                    continue
+                for lon, lat in leg.polyline:
+                    dist = haversine_distance(lat, lon, exit_poi.lat, exit_poi.lon)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_exit = exit_poi
+
+            if best_exit is not None:
+                leg.destination_poi = best_exit
+                leg.destination_fallback = None
+
+    return legs
+
+
+def apply_platform_section_overrides(
+    legs: list[NavigationLeg],
+    platforms: "list",
+    sectors: "list",
+) -> list[NavigationLeg]:
+    """
+    Post-process legs to override destination with platform section directions
+    when a leg starts on a platform that has sections.
+
+    On a platform with sections, the user should always be told which section
+    to walk towards — never a POI name.
+
+    Args:
+        legs: Built navigation legs (with polylines).
+        platforms: All platforms for the station.
+        sectors: Platform sectors (A, B, C, ...).
+
+    Returns:
+        The same list of legs, with platform section overrides applied in-place.
+    """
+    if not sectors:
+        return legs
+
+    from pipeline.landmark_enricher import (
+        _find_nearest_sector,
+        _point_in_polygon,
+    )
+
+    for leg in legs:
+        if leg.leg_type != "WALK" or len(leg.polyline) < 2:
+            continue
+
+        start_lon, start_lat = leg.polyline[0]
+        end_lon, end_lat = leg.polyline[-1]
+
+        # Check if the leg starts physically within a platform polygon
+        matched_platform = None
+        for plat in platforms:
+            if plat.level != leg.level:
+                continue
+            if not plat.polygon:
+                continue
+            if _point_in_polygon(start_lon, start_lat, plat.polygon):
+                matched_platform = plat
+                break
+
+        if matched_platform is None:
+            continue
+
+        # Check if this platform has sections
+        platform_sectors = [
+            s for s in sectors
+            if s.platform_name == matched_platform.name or s.track_name == matched_platform.name
+        ]
+        if not platform_sectors:
+            continue
+
+        # Platform has sections — find the section closest to the leg's endpoint
+        # (i.e., the direction the user should walk)
+        nearest_sector = _find_nearest_sector(end_lat, end_lon, matched_platform.name, sectors)
+
+        if nearest_sector:
+            leg.destination_poi = None
+            leg.destination_fallback = f"Richtung Abschnitt {nearest_sector.name}"
+
+    return legs

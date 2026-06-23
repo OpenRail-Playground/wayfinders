@@ -33,6 +33,7 @@ class POI:
     lon: float
     tags: list[str] = field(default_factory=list)
     detail: Optional[str] = None
+    geometry_area_m2: float = 0.0  # approximate area from polygon geometry (0 = point/unknown)
 
 
 @dataclass
@@ -44,6 +45,27 @@ class Platform:
     center_lat: float
     center_lon: float
     category: str  # "TRACK" or "PLATFORM"
+    polygon: list[tuple[float, float]] = field(default_factory=list)  # [(lon, lat), ...] outer ring
+
+
+@dataclass
+class PlatformSector:
+    """A named section (A, B, C, ...) on a platform."""
+
+    name: str  # e.g. "A", "B", "C"
+    platform_name: str  # e.g. "5", "101/102"
+    track_name: str  # e.g. "5"
+    lat: float  # cube/center position
+    lon: float  # cube/center position
+
+
+@dataclass
+class BuildingPolygon:
+    """A building footprint polygon for inside/outside detection."""
+
+    building_id: str
+    name: str
+    polygon: list[tuple[float, float]]  # [(lon, lat), ...] outer ring coordinates
 
 
 @dataclass
@@ -96,3 +118,4 @@ class NavigationLeg:
     destination_fallback: Optional[str] = None  # fallback cue if no POI
     turn_direction: Optional[str] = None  # "left", "right", or None (for first leg / level changes)
     angle_change: float = 0.0  # bearing change at the start of this leg
+    polyline: list[tuple[float, float]] = field(default_factory=list)  # [(lon, lat), ...] slice for this leg
