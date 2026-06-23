@@ -19,7 +19,7 @@ export default function Home() {
   const [turnPoints, setTurnPoints] = useState<TurnPoint[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(query: string) {
+  async function handleSubmit(query: string, image?: { base64: string; mediaType: string; preview: string }) {
     setIsLoading(true);
     setInstructions([]);
     setRoute([]);
@@ -30,10 +30,21 @@ export default function Home() {
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
+      const requestBody: Record<string, unknown> = {
+        zoneID: selectedZoneID,
+        query,
+        handicapped,
+      };
+
+      if (image) {
+        requestBody.image = image.base64;
+        requestBody.image_media_type = image.mediaType;
+      }
+
       const response = await fetch('/api/navigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ zoneID: selectedZoneID, query, handicapped }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
 

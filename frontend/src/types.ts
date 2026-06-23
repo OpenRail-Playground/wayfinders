@@ -2,6 +2,8 @@ export interface NavigateRequest {
   zoneID: string;
   query: string;
   handicapped: boolean;
+  image?: string;
+  image_media_type?: string;
 }
 
 export interface RoutePoint {

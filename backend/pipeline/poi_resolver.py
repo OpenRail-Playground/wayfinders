@@ -119,6 +119,99 @@ class POIResolver:
         # Parse the LLM response
         return self._parse_response(response_text)
 
+    async def resolve_destination_only(
+        self,
+        destination_description: str,
+        zone_id: str,
+    ) -> Position:
+        """
+        Resolve only a destination description to a geographic position.
+
+        Used when the start position is already known (e.g. from image).
+
+        Args:
+            destination_description: Free-text description of the destination.
+            zone_id: The station's zone ID for fetching POIs/platforms.
+
+        Returns:
+            The destination Position.
+
+        Raises:
+            POIResolverError: If the destination cannot be resolved.
+        """
+        location_list = await self._fetch_locations(zone_id)
+
+        if not location_list:
+            raise POIResolverError(
+                f"No POIs or platforms found for zone {zone_id}",
+                user_message="Bahnhofsdaten konnten nicht abgerufen werden",
+            )
+
+        # Build a destination-only user message
+        location_lines = []
+        for loc in location_list:
+            location_lines.append(
+                f"- {loc['name']} (category: {loc['category']}, "
+                f"level: {loc['level']}, lat: {loc['lat']}, lon: {loc['lon']})"
+            )
+        locations_text = "\n".join(location_lines)
+
+        user_message = (
+            f"Available locations in this station:\n"
+            f"{locations_text}\n\n"
+            f"Match the following destination description to the best-fit location from the list above:\n"
+            f"- Destination: \"{destination_description}\"\n\n"
+            f"Return the coordinates and level as JSON.\n"
+            f"Output format: {{\"destination\": {{\"lat\": <number>, \"lon\": <number>, \"level\": \"<string>\"}}}}"
+        )
+
+        messages = [{"role": "user", "content": [{"text": user_message}]}]
+
+        try:
+            response_text = await self._genai.complete(
+                messages=messages,
+                system_message=SYSTEM_PROMPT,
+            )
+        except GenAIError as exc:
+            logger.error("LLM call failed during destination-only POI resolution: %s", exc)
+            raise POIResolverError(
+                f"LLM call failed: {exc}",
+                user_message="KI-Service ist vorübergehend nicht verfügbar",
+            ) from exc
+
+        # Parse response
+        try:
+            parsed = json.loads(response_text.strip())
+        except json.JSONDecodeError as exc:
+            logger.error(
+                "Failed to parse LLM response as JSON: %s | Response: %s",
+                exc,
+                response_text[:200],
+            )
+            raise POIResolverError(
+                f"LLM returned invalid JSON: {response_text[:100]}",
+                user_message="Zielposition konnte nicht im Bahnhof gefunden werden",
+            ) from exc
+
+        dest_data = parsed.get("destination")
+        if dest_data is None:
+            raise POIResolverError(
+                "Destination could not be resolved",
+                user_message="Zielposition konnte nicht im Bahnhof gefunden werden",
+            )
+
+        try:
+            return Position(
+                lat=float(dest_data["lat"]),
+                lon=float(dest_data["lon"]),
+                level=str(dest_data["level"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise POIResolverError(
+                f"Invalid destination position data: {dest_data}",
+                user_message="Zielposition konnte nicht im Bahnhof gefunden werden",
+            ) from exc
+
     async def _fetch_locations(self, zone_id: str) -> list[dict]:
         """
         Fetch POIs and platforms, returning a combined location list.

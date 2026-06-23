@@ -126,3 +126,61 @@ class IntentParser:
             start_description=start_desc,
             destination_description=dest_desc,
         )
+
+    async def parse_destination_only(self, query: str) -> ParsedIntent:
+        """
+        Parse a user query to extract the destination description only.
+
+        Used when the start position will be determined from an image.
+        The start_description in the result will be empty.
+
+        Args:
+            query: The raw user query in natural language (German or English).
+
+        Returns:
+            ParsedIntent with an empty start_description and the destination.
+
+        Raises:
+            IntentParserError: If the destination cannot be determined.
+        """
+        messages = [
+            {"role": "user", "content": [{"text": query}]}
+        ]
+
+        try:
+            response_text = await self._client.complete(
+                messages=messages,
+                system_message=SYSTEM_PROMPT,
+            )
+        except GenAIError as exc:
+            logger.error("LLM call failed during intent parsing: %s", exc)
+            raise IntentParserError(
+                f"LLM call failed: {exc}",
+                user_message="KI-Service ist vorübergehend nicht verfügbar",
+            ) from exc
+
+        try:
+            parsed = json.loads(response_text.strip())
+        except json.JSONDecodeError as exc:
+            logger.error(
+                "Failed to parse LLM response as JSON: %s | Response: %s",
+                exc,
+                response_text[:200],
+            )
+            raise IntentParserError(
+                f"LLM returned invalid JSON: {response_text[:100]}",
+                user_message="Zielposition konnte nicht erkannt werden",
+            ) from exc
+
+        dest_desc = parsed.get("destination_description")
+
+        if not dest_desc:
+            raise IntentParserError(
+                "Destination could not be determined from query",
+                user_message="Zielposition konnte nicht erkannt werden",
+            )
+
+        return ParsedIntent(
+            start_description="",
+            destination_description=dest_desc,
+        )

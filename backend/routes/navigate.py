@@ -3,10 +3,12 @@ Navigation endpoint.
 
 Accepts a user's natural language query and station zoneID,
 runs the navigation pipeline, and returns step-by-step instructions.
+Optionally accepts a base64-encoded image of the user's current position.
 """
 
 from __future__ import annotations
 
+import base64
 import logging
 from typing import List, Optional
 
@@ -21,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Maximum image size: 5 MB (base64 encoded is ~33% larger)
+MAX_IMAGE_BASE64_LENGTH = 7_000_000  # ~5MB raw image
+
 
 class NavigateRequest(BaseModel):
     """Request body for the navigate endpoint."""
@@ -28,6 +33,14 @@ class NavigateRequest(BaseModel):
     zoneID: str = Field(..., min_length=1, description="Station zone ID")
     query: str = Field(..., description="User's navigation query (max 500 chars)")
     handicapped: bool = Field(False, description="Whether to compute a barrier-free route")
+    image: Optional[str] = Field(
+        None,
+        description="Base64-encoded image of the user's current position",
+    )
+    image_media_type: Optional[str] = Field(
+        None,
+        description="MIME type of the image (e.g. image/jpeg, image/png)",
+    )
 
     @field_validator("query")
     @classmethod
@@ -40,6 +53,32 @@ class NavigateRequest(BaseModel):
                 "Die Beschreibung darf maximal 500 Zeichen lang sein"
             )
         return stripped
+
+    @field_validator("image")
+    @classmethod
+    def image_must_be_valid_base64(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if len(v) > MAX_IMAGE_BASE64_LENGTH:
+            raise ValueError("Das Bild ist zu groß (max. 5 MB)")
+        # Validate it's valid base64
+        try:
+            base64.b64decode(v)
+        except Exception:
+            raise ValueError("Ungültiges Bildformat")
+        return v
+
+    @field_validator("image_media_type")
+    @classmethod
+    def image_media_type_must_be_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        allowed = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+        if v not in allowed:
+            raise ValueError(
+                f"Ungültiger Bildtyp. Erlaubt: {', '.join(allowed)}"
+            )
+        return v
 
 
 class RoutePoint(BaseModel):
@@ -119,6 +158,8 @@ async def navigate(body: NavigateRequest, request: Request):
             query=body.query,
             zone_id=body.zoneID,
             handicapped=body.handicapped,
+            image_base64=body.image,
+            image_media_type=body.image_media_type,
         )
 
         from pipeline.turn_detector import detect_turns, _rdp_simplify

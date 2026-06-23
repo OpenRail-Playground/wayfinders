@@ -91,7 +91,7 @@ describe('NavigationInput', () => {
     const button = screen.getByRole('button', { name: /navigieren/i });
     await user.click(button);
 
-    expect(onSubmit).toHaveBeenCalledWith('Wo ist der Starbucks?');
+    expect(onSubmit).toHaveBeenCalledWith('Wo ist der Starbucks?', undefined);
   });
 
   it('clears validation message when user types', async () => {

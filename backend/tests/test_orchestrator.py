@@ -237,87 +237,6 @@ async def test_navigate_unexpected_error_gives_generic_message(orchestrator):
 
 
 @pytest.mark.asyncio
-async def test_navigate_logs_warning_when_exceeds_soft_target(orchestrator, caplog):
-    """Test that a warning is logged when pipeline exceeds 15s soft target."""
-    import time
-
-    async def slow_parse(query):
-        # We can't actually wait 15s in a test, so we patch time.monotonic
-        return ParsedIntent(start_description="A", destination_description="B")
-
-    # Patch time.monotonic only within _run_pipeline by providing enough values
-    # for both the event loop (which calls monotonic internally) and our code.
-    # Instead, we patch at the module level with a function that simulates elapsed time.
-    call_count = {"n": 0}
-    real_monotonic = time.monotonic
-
-    def fake_monotonic():
-        call_count["n"] += 1
-        # First call in _run_pipeline is start_time, second call is in finally block
-        # But asyncio event loop also calls monotonic, so we only fake within our module
-        # by using a wrapper that returns predictable values for our code.
-        return real_monotonic()
-
-    # Use a simpler approach: patch SOFT_TARGET_SECONDS to 0 so any elapsed time triggers warning
-    with patch.object(
-        orchestrator._intent_parser,
-        "parse",
-        new_callable=AsyncMock,
-        return_value=ParsedIntent(start_description="A", destination_description="B"),
-    ), patch.object(
-        orchestrator._poi_resolver,
-        "resolve",
-        new_callable=AsyncMock,
-        return_value=(
-            Position(lat=50.1, lon=8.6, level="GROUND_FLOOR"),
-            Position(lat=50.2, lon=8.7, level="GROUND_FLOOR"),
-        ),
-    ), patch.object(
-        orchestrator._route_computer,
-        "compute_route",
-        new_callable=AsyncMock,
-        return_value=[
-            RouteSegment(
-                segment_type="WALK",
-                level="GROUND_FLOOR",
-                length_m=50.0,
-                polyline=[(8.6, 50.1), (8.7, 50.2)],
-            )
-        ],
-    ), patch.object(
-        orchestrator._landmark_enricher,
-        "enrich",
-        return_value=[
-            EnrichedSegment(
-                segment=RouteSegment(
-                    segment_type="WALK",
-                    level="GROUND_FLOOR",
-                    length_m=50.0,
-                    polyline=[(8.6, 50.1), (8.7, 50.2)],
-                ),
-                landmark_poi=None,
-                landmark_distance_m=0.0,
-                fallback_cue="Korridor",
-            )
-        ],
-    ), patch.object(
-        orchestrator._description_generator,
-        "generate",
-        new_callable=AsyncMock,
-        return_value=["Weiter geradeaus."],
-    ), patch(
-        "pipeline.orchestrator.SOFT_TARGET_SECONDS", 0.0,
-    ):
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="pipeline.orchestrator"):
-            result = await orchestrator.navigate("Von A nach B", "1866")
-
-    assert result == ["Weiter geradeaus."]
-    assert "exceeded soft target" in caplog.text
-
-
-@pytest.mark.asyncio
 async def test_fetch_pois_and_platforms_graceful_degradation(
     orchestrator, mock_ris_maps_client
 ):
@@ -374,23 +293,4 @@ async def test_fetch_pois_and_platforms_parses_data(orchestrator, mock_ris_maps_
     assert platforms[0].center_lon == 8.7
 
 
-@pytest.mark.asyncio
-async def test_navigate_hard_timeout_raises_orchestrator_error(orchestrator):
-    """Test that exceeding the hard timeout raises OrchestratorError with timeout message."""
-    import asyncio
 
-    async def slow_parse(query):
-        await asyncio.sleep(100)  # Simulate a very slow operation
-        return ParsedIntent(start_description="A", destination_description="B")
-
-    with patch.object(
-        orchestrator._intent_parser,
-        "parse",
-        side_effect=slow_parse,
-    ), patch(
-        "pipeline.orchestrator.HARD_TIMEOUT_SECONDS", 0.1,  # 100ms for test speed
-    ):
-        with pytest.raises(OrchestratorError) as exc_info:
-            await orchestrator.navigate("Von A nach B", "1866")
-
-    assert exc_info.value.user_message == "Anfrage hat zu lange gedauert"

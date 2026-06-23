@@ -8,13 +8,11 @@ Executes the sequential steps:
 4. LandmarkEnricher.enrich(segments, pois, platforms) → list[EnrichedSegment]
 5. DescriptionGenerator.generate(enriched_segments) → list[str]
 
-Enforces a 15-second soft target (logs warning if exceeded) and passes through
-errors from each stage with their user-facing messages.
+Passes through errors from each stage with their user-facing messages.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Optional
@@ -26,6 +24,7 @@ from clients.ris_maps_client import (
     RISMapsNoContentError,
 )
 from pipeline.description_generator import DescriptionGenerator, DescriptionGeneratorError
+from pipeline.image_location_resolver import ImageLocationResolver, ImageLocationResolverError
 from pipeline.intent_parser import IntentParser, IntentParserError
 from pipeline.landmark_enricher import LandmarkEnricher
 from pipeline.leg_builder import build_legs
@@ -34,12 +33,6 @@ from pipeline.poi_resolver import POIResolver, POIResolverError
 from pipeline.route_computer import RouteComputer, RouteComputerError
 
 logger = logging.getLogger(__name__)
-
-# Soft target: log a warning if the pipeline takes longer than this
-SOFT_TARGET_SECONDS = 15.0
-
-# Hard timeout: None = no timeout
-HARD_TIMEOUT_SECONDS = None
 
 
 class OrchestratorError(Exception):
@@ -64,21 +57,45 @@ class NavigationOrchestrator:
 
         # Construct pipeline components
         self._intent_parser = IntentParser(genai_client)
+        self._image_location_resolver = ImageLocationResolver(ris_maps_client, genai_client)
         self._poi_resolver = POIResolver(ris_maps_client, genai_client)
         self._route_computer = RouteComputer(ris_maps_client)
         self._landmark_enricher = LandmarkEnricher()
         self._description_generator = DescriptionGenerator(genai_client)
 
-    async def navigate(self, query: str, zone_id: str, handicapped: bool = False) -> list[str]:
+    async def navigate(
+        self,
+        query: str,
+        zone_id: str,
+        handicapped: bool = False,
+        image_base64: Optional[str] = None,
+        image_media_type: Optional[str] = None,
+    ) -> list[str]:
         """
         Execute the full navigation pipeline. Returns instructions only.
         """
-        instructions, _segments, _enriched = await self.navigate_with_route(query, zone_id, handicapped)
+        instructions, _segments, _enriched = await self.navigate_with_route(
+            query, zone_id, handicapped, image_base64, image_media_type
+        )
         return instructions
 
-    async def navigate_with_route(self, query: str, zone_id: str, handicapped: bool = False) -> tuple[list[str], list, list]:
+    async def navigate_with_route(
+        self,
+        query: str,
+        zone_id: str,
+        handicapped: bool = False,
+        image_base64: Optional[str] = None,
+        image_media_type: Optional[str] = None,
+    ) -> tuple[list[str], list, list]:
         """
         Execute the full navigation pipeline.
+
+        Args:
+            query: User's navigation query.
+            zone_id: Station zone ID.
+            handicapped: Whether to compute a barrier-free route.
+            image_base64: Optional base64-encoded image of user's current position.
+            image_media_type: MIME type of the image (e.g. "image/jpeg").
 
         Returns:
             Tuple of (instructions list, route_segments list, enriched_segments list).
@@ -86,47 +103,92 @@ class NavigationOrchestrator:
         Raises:
             OrchestratorError: If any pipeline stage fails.
         """
-        try:
-            if HARD_TIMEOUT_SECONDS is not None:
-                return await asyncio.wait_for(
-                    self._run_pipeline(query, zone_id, handicapped),
-                    timeout=HARD_TIMEOUT_SECONDS,
-                )
-            else:
-                return await self._run_pipeline(query, zone_id, handicapped)
-        except asyncio.TimeoutError:
-            logger.error(
-                "Navigation pipeline hard timeout exceeded (%.1fs) for zone %s",
-                HARD_TIMEOUT_SECONDS,
-                zone_id,
-            )
-            raise OrchestratorError(
-                f"Pipeline exceeded hard timeout of {HARD_TIMEOUT_SECONDS}s",
-                user_message="Anfrage hat zu lange gedauert",
-            )
+        return await self._run_pipeline(query, zone_id, handicapped, image_base64, image_media_type)
 
-    async def _run_pipeline(self, query: str, zone_id: str, handicapped: bool = False) -> tuple[list[str], list, list]:
+    async def _run_pipeline(
+        self,
+        query: str,
+        zone_id: str,
+        handicapped: bool = False,
+        image_base64: Optional[str] = None,
+        image_media_type: Optional[str] = None,
+    ) -> tuple[list[str], list, list]:
         """
         Internal pipeline execution, wrapped by navigate() with a hard timeout.
+
+        If an image is provided, the start position is determined from the photo
+        using the ImageLocationResolver. The text-based start from IntentParser
+        is ignored in that case.
         """
         start_time = time.monotonic()
 
         try:
-            # Step 1: Parse intent
+            # Step 1: Parse intent from text
             logger.info("[Step 1 IntentParser] Input: query=%r", query)
-            parsed_intent = await self._intent_parser.parse(query)
-            logger.info("[Step 1 IntentParser] Output: start=%r, dest=%r",
-                parsed_intent.start_description, parsed_intent.destination_description)
+            try:
+                parsed_intent = await self._intent_parser.parse(query)
+                logger.info("[Step 1 IntentParser] Output: start=%r, dest=%r",
+                    parsed_intent.start_description, parsed_intent.destination_description)
+            except IntentParserError as exc:
+                # If we have an image and the error is about missing start, try destination-only parsing
+                if image_base64 and image_media_type and "Start position" in str(exc):
+                    logger.info(
+                        "[Step 1 IntentParser] Start not found in text, will use image instead"
+                    )
+                    # Re-parse allowing null start
+                    parsed_intent = await self._intent_parser.parse_destination_only(query)
+                    logger.info("[Step 1 IntentParser] Output (dest only): dest=%r",
+                        parsed_intent.destination_description)
+                else:
+                    raise
+
+            # Step 1b: If image provided, resolve start position from photo
+            image_start_position: Optional[Position] = None
+            if image_base64 and image_media_type:
+                logger.info("[Step 1b ImageLocationResolver] Resolving start from image")
+                try:
+                    image_start_position = await self._image_location_resolver.resolve(
+                        image_base64=image_base64,
+                        image_media_type=image_media_type,
+                        zone_id=zone_id,
+                    )
+                    logger.info(
+                        "[Step 1b ImageLocationResolver] Output: lat=%s, lon=%s, level=%s",
+                        image_start_position.lat,
+                        image_start_position.lon,
+                        image_start_position.level,
+                    )
+                except ImageLocationResolverError as exc:
+                    # If image resolution fails, fall back to text-based start
+                    logger.warning(
+                        "[Step 1b ImageLocationResolver] Failed, falling back to text: %s",
+                        exc,
+                    )
+                    image_start_position = None
 
             # Step 2: Resolve POIs to positions
-            logger.info("[Step 2 POIResolver] Input: start=%r, dest=%r, zone=%s",
-                parsed_intent.start_description, parsed_intent.destination_description, zone_id)
-            start_pos, dest_pos = await self._poi_resolver.resolve(
-                start_description=parsed_intent.start_description,
-                destination_description=parsed_intent.destination_description,
-                zone_id=zone_id,
-            )
-            logger.info("[Step 2 POIResolver] Output: start=%s, dest=%s", start_pos, dest_pos)
+            if image_start_position:
+                # Image provided: only resolve the destination via POIResolver
+                logger.info(
+                    "[Step 2 POIResolver] Using image-based start, resolving destination only: dest=%r, zone=%s",
+                    parsed_intent.destination_description, zone_id,
+                )
+                dest_pos = await self._poi_resolver.resolve_destination_only(
+                    destination_description=parsed_intent.destination_description,
+                    zone_id=zone_id,
+                )
+                start_pos = image_start_position
+                logger.info("[Step 2 POIResolver] Output: start (from image)=%s, dest=%s", start_pos, dest_pos)
+            else:
+                # No image: resolve both start and destination from text
+                logger.info("[Step 2 POIResolver] Input: start=%r, dest=%r, zone=%s",
+                    parsed_intent.start_description, parsed_intent.destination_description, zone_id)
+                start_pos, dest_pos = await self._poi_resolver.resolve(
+                    start_description=parsed_intent.start_description,
+                    destination_description=parsed_intent.destination_description,
+                    zone_id=zone_id,
+                )
+                logger.info("[Step 2 POIResolver] Output: start=%s, dest=%s", start_pos, dest_pos)
 
             # Step 3: Compute route
             logger.info("[Step 3 RouteComputer] Input: start=%s, dest=%s, zone=%s, handicapped=%s", start_pos, dest_pos, zone_id, handicapped)
@@ -177,6 +239,12 @@ class NavigationOrchestrator:
                 user_message=exc.user_message,
             ) from exc
 
+        except ImageLocationResolverError as exc:
+            raise OrchestratorError(
+                f"Image location resolution failed: {exc}",
+                user_message=exc.user_message,
+            ) from exc
+
         except POIResolverError as exc:
             raise OrchestratorError(
                 f"POI resolution failed: {exc}",
@@ -204,14 +272,7 @@ class NavigationOrchestrator:
 
         finally:
             elapsed = time.monotonic() - start_time
-            if elapsed > SOFT_TARGET_SECONDS:
-                logger.warning(
-                    "Navigation pipeline exceeded soft target: %.2fs (target: %.1fs)",
-                    elapsed,
-                    SOFT_TARGET_SECONDS,
-                )
-            else:
-                logger.info("Navigation pipeline completed in %.2fs", elapsed)
+            logger.info("Navigation pipeline completed in %.2fs", elapsed)
 
         return instructions, route_segments, enriched_segments
 
