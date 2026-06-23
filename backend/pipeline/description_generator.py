@@ -46,6 +46,7 @@ Your task: Given a list of navigation legs, generate exactly ONE concise navigat
 Rules:
 - Generate exactly one instruction per leg, in the same order as the input.
 - Each WALK leg has a destination POI or landmark — tell the user to walk towards it.
+- If a leg has NO destination (empty), just tell the user the distance and direction (e.g., "Gehen Sie 22 Meter geradeaus." or "Biegen Sie rechts ab und gehen Sie 22 Meter.").
 - If a leg has a turn_direction (links/rechts), start the instruction with the turn (e.g., "Biegen Sie rechts ab und gehen Sie Richtung Pret A Manger").
 - If there is no turn_direction, it's the first leg or a straight continuation — just say "Gehen Sie Richtung [destination]".
 - For level-change legs (STAIRS, ESCALATOR, ELEVATOR, RAMP), mention the facility type and target level.

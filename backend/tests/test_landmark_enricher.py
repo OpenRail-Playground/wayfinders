@@ -141,7 +141,7 @@ class TestLandmarkEnricher:
 
         result = self.enricher.enrich([segment], [poi], [])
         assert result[0].landmark_poi is None
-        assert result[0].fallback_cue == "Korridor"
+        assert result[0].fallback_cue is None
 
     def test_ignores_poi_beyond_30m(self):
         # POI is ~500m away
@@ -201,7 +201,7 @@ class TestLandmarkEnricher:
 
         result = self.enricher.enrich([segment], [], [platform])
         assert result[0].landmark_poi is None
-        assert result[0].fallback_cue == "Gleis 5/6"
+        assert result[0].fallback_cue is None
 
     def test_fallback_to_korridor_no_nearby_platform(self):
         # Platform is very far away
@@ -214,7 +214,7 @@ class TestLandmarkEnricher:
 
         result = self.enricher.enrich([segment], [], [platform])
         assert result[0].landmark_poi is None
-        assert result[0].fallback_cue == "Korridor"
+        assert result[0].fallback_cue is None
 
     def test_non_walk_segment_no_landmark(self):
         poi = _make_poi(lat=50.1073, lon=8.6637, level="GROUND_FLOOR")
@@ -241,7 +241,7 @@ class TestLandmarkEnricher:
         )
         result = self.enricher.enrich([segment], [], [])
         assert result[0].landmark_poi is None
-        assert result[0].fallback_cue == "Korridor"
+        assert result[0].fallback_cue is None
 
     def test_multiple_segments_enriched_independently(self):
         poi1 = _make_poi(

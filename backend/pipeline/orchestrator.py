@@ -237,8 +237,12 @@ class NavigationOrchestrator:
             for i, leg in enumerate(legs):
                 dest = leg.destination_poi.name if leg.destination_poi else leg.destination_fallback
                 building_info = self._describe_building_context(leg.polyline, buildings)
-                logger.info("  Leg %d: %s %.0fm, turn=%s, dest=%r, building=%s",
-                    i + 1, leg.leg_type, leg.length_m, leg.turn_direction, dest, building_info)
+                poi_detail = ""
+                if leg.destination_poi:
+                    p = leg.destination_poi
+                    poi_detail = f", poi_id={p.poi_id}, poi_coords=({p.lat:.5f},{p.lon:.5f})"
+                logger.info("  Leg %d: %s %.0fm, turn=%s, dest=%r%s, building=%s",
+                    i + 1, leg.leg_type, leg.length_m, leg.turn_direction, dest, poi_detail, building_info)
 
             # Step 6: Generate descriptions from legs
             logger.info("[Step 6 DescriptionGenerator] Input: %d legs", len(legs))
@@ -316,7 +320,7 @@ class NavigationOrchestrator:
                     geometry_area = self._compute_geometry_area(raw)
                     pois.append(
                         POI(
-                            poi_id=raw.get("id", ""),
+                            poi_id=raw.get("poiID", ""),
                             name=raw.get("name", "Unknown"),
                             category=raw.get("category", "Unknown"),
                             group=raw.get("group", ""),

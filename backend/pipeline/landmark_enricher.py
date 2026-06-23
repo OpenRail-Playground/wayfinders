@@ -57,6 +57,25 @@ LOW_VISIBILITY_CATEGORIES = {
 EARTH_RADIUS_M = 6_371_000.0
 
 
+def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Bearing in degrees (0=N, 90=E) from point 1 to point 2."""
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dlam = math.radians(lon2 - lon1)
+    x = math.sin(dlam) * math.cos(phi2)
+    y = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlam)
+    return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+
+def _normalize_angle(angle: float) -> float:
+    """Normalize angle to [-180, 180]."""
+    while angle > 180:
+        angle -= 360
+    while angle < -180:
+        angle += 360
+    return angle
+
+
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
     Calculate the great-circle distance between two points using the haversine formula.
@@ -300,43 +319,6 @@ def _find_nearest_sector(
     return nearest
 
 
-def _get_fallback_cue(
-    lat: float,
-    lon: float,
-    level: str,
-    platforms: list[Platform],
-    sectors: list[PlatformSector],
-    direction_lat: Optional[float] = None,
-    direction_lon: Optional[float] = None,
-) -> str:
-    """
-    Generate a fallback structural cue when no landmark POI is available.
-
-    Checks if a platform is nearby and references it by number.
-    If on a platform with sections, determines the direction in terms of
-    which section the user should move towards.
-    """
-    nearest_platform = _find_nearest_platform(lat, lon, level, platforms)
-    if nearest_platform is not None:
-        dist = haversine_distance(
-            lat, lon, nearest_platform.center_lat, nearest_platform.center_lon
-        )
-        if dist <= MAX_PLATFORM_PROXIMITY_M and sectors:
-            # We're on/near a platform — find the section to move towards
-            target_lat = direction_lat if direction_lat is not None else lat
-            target_lon = direction_lon if direction_lon is not None else lon
-            nearest_sector = _find_nearest_sector(
-                target_lat, target_lon, nearest_platform.name, sectors
-            )
-            if nearest_sector:
-                return f"Gleis {nearest_platform.name}, Richtung Abschnitt {nearest_sector.name}"
-            return f"Gleis {nearest_platform.name}"
-        elif dist <= MAX_PLATFORM_PROXIMITY_M:
-            return f"Gleis {nearest_platform.name}"
-
-    return "Korridor"
-
-
 class LandmarkEnricher:
     """
     Enriches route segments with landmark POI references.
@@ -412,8 +394,15 @@ class LandmarkEnricher:
                     )
                 else:
                     # Not on a platform — find best landmark POI at endpoint
+                    # Compute travel direction bearing at the endpoint
+                    seg_bearing: Optional[float] = None
+                    if len(segment.polyline) >= 2:
+                        prev_lon, prev_lat = segment.polyline[-2]
+                        seg_bearing = _bearing(prev_lat, prev_lon, endpoint_lat, endpoint_lon)
+
                     landmark, distance = self._find_best_landmark(
-                        endpoint_lat, endpoint_lon, endpoint_level, pois, name_counts
+                        endpoint_lat, endpoint_lon, endpoint_level, pois, name_counts,
+                        direction_bearing=seg_bearing,
                     )
 
                     if landmark is not None:
@@ -427,17 +416,14 @@ class LandmarkEnricher:
                             )
                         )
                     else:
-                        # No landmark found — use fallback structural cue
-                        fallback = _get_fallback_cue(
-                            endpoint_lat, endpoint_lon, endpoint_level,
-                            platforms, sectors, direction_lat, direction_lon,
-                        )
+                        # No landmark found — no fallback cue; description generator
+                        # will produce a distance-only instruction
                         enriched.append(
                             EnrichedSegment(
                                 segment=segment,
                                 landmark_poi=None,
                                 landmark_distance_m=0.0,
-                                fallback_cue=fallback,
+                                fallback_cue=None,
                                 turn_landmarks=turn_landmarks,
                             )
                         )
@@ -498,8 +484,14 @@ class LandmarkEnricher:
                 ))
             else:
                 # Not on a platform — find best recognizable POI
+                # Compute bearing from turn towards next waypoint
+                turn_bearing: Optional[float] = None
+                if next_lat is not None and next_lon is not None:
+                    turn_bearing = _bearing(turn.lat, turn.lon, next_lat, next_lon)
+
                 poi, _dist = self._find_best_landmark(
-                    turn.lat, turn.lon, segment.level, pois, name_counts
+                    turn.lat, turn.lon, segment.level, pois, name_counts,
+                    direction_bearing=turn_bearing,
                 )
                 if poi:
                     turn_landmarks.append(TurnLandmark(
@@ -511,17 +503,13 @@ class LandmarkEnricher:
                         fallback_cue=None,
                     ))
                 else:
-                    fallback = _get_fallback_cue(
-                        turn.lat, turn.lon, segment.level,
-                        platforms, sectors,
-                    )
                     turn_landmarks.append(TurnLandmark(
                         lat=turn.lat,
                         lon=turn.lon,
                         angle_change=turn.angle_change,
                         index=turn.index,
                         poi=None,
-                        fallback_cue=fallback,
+                        fallback_cue=None,
                     ))
 
         return turn_landmarks
@@ -579,6 +567,7 @@ class LandmarkEnricher:
         level: str,
         pois: list[POI],
         name_counts: Counter,
+        direction_bearing: Optional[float] = None,
     ) -> tuple[Optional[POI], float]:
         """
         Find the best landmark POI within 30m on the same level.
@@ -587,6 +576,10 @@ class LandmarkEnricher:
         - Proximity (closer is better, but not the only factor)
         - Visibility (larger/more prominent POIs score higher)
         - Uniqueness (POIs that appear only once in the station are preferred)
+
+        Only considers POIs within a 120° field of vision in the direction of travel
+        (±60° from the direction_bearing). If no direction is provided, all POIs
+        within range are considered.
 
         The scoring formula:
             combined_score = visibility_score * (1 - distance_penalty)
@@ -599,6 +592,8 @@ class LandmarkEnricher:
             level: Level to filter POIs by.
             pois: All available POIs.
             name_counts: Pre-computed occurrence counts for POI names.
+            direction_bearing: Bearing of travel direction in degrees (0=N, 90=E).
+                If provided, only POIs within ±60° of this bearing are considered.
 
         Returns:
             Tuple of (best POI or None, distance in meters).
@@ -622,6 +617,13 @@ class LandmarkEnricher:
             # Must be within threshold
             if distance > MAX_LANDMARK_DISTANCE_M:
                 continue
+
+            # Field-of-vision filter: POI must be within ±60° of travel direction
+            if direction_bearing is not None and distance > 1.0:
+                bearing_to_poi = _bearing(lat, lon, poi.lat, poi.lon)
+                angle_diff = _normalize_angle(bearing_to_poi - direction_bearing)
+                if abs(angle_diff) > 60.0:
+                    continue
 
             # Compute combined score
             vis_score = _visibility_score(poi, name_counts)
