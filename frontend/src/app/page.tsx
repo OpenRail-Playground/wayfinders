@@ -1,30 +1,73 @@
 'use client';
 
-import { useState } from 'react';
-import dynamic from 'next/dynamic';
-import StationSelector from '../components/StationSelector';
-import NavigationInput from '../components/NavigationInput';
-import NavigationResults from '../components/NavigationResults';
-import { NavigateResponse, RouteSegment, TurnPoint } from '../types';
-
-// Leaflet needs window, so load the map only on client side
-const RouteMap = dynamic(() => import('../components/RouteMap'), { ssr: false });
+import { useState, useRef, useEffect, useCallback } from 'react';
+import ChatHeader from '../components/ChatHeader';
+import ChatMessageBubble from '../components/ChatMessageBubble';
+import ChatInput from '../components/ChatInput';
+import { ChatMessage, NavigateResponse } from '../types';
 
 export default function Home() {
   const [selectedZoneID, setSelectedZoneID] = useState('');
+  const [selectedStationName, setSelectedStationName] = useState('');
   const [handicapped, setHandicapped] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [instructions, setInstructions] = useState<string[]>([]);
-  const [route, setRoute] = useState<RouteSegment[]>([]);
-  const [turnPoints, setTurnPoints] = useState<TurnPoint[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  async function handleSubmit(query: string, image?: { base64: string; mediaType: string; preview: string }) {
+  // Add welcome message on mount
+  useEffect(() => {
+    setMessages([
+      {
+        id: 'welcome',
+        role: 'assistant',
+        content: 'Hallo! 👋 Ich helfe dir, dich im Bahnhof zurechtzufinden. Wähle oben einen Bahnhof aus und sag mir, wohin du möchtest.',
+        timestamp: new Date(),
+      },
+    ]);
+  }, []);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleStationChange = useCallback((zoneID: string, name: string) => {
+    setSelectedZoneID(zoneID);
+    setSelectedStationName(name);
+  }, []);
+
+  async function handleSend(query: string, image?: { base64: string; mediaType: string; preview: string }) {
+    if (!selectedZoneID) {
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: 'Bitte wähle zuerst einen Bahnhof aus. ☝️',
+        timestamp: new Date(),
+      }]);
+      return;
+    }
+
+    // Add user message
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: query,
+      timestamp: new Date(),
+      image: image?.preview,
+    };
+    setMessages(prev => [...prev, userMessage]);
+
+    // Add loading message
+    const loadingId = (Date.now() + 1).toString();
+    setMessages(prev => [...prev, {
+      id: loadingId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      isLoading: true,
+    }]);
+
     setIsLoading(true);
-    setInstructions([]);
-    setRoute([]);
-    setTurnPoints([]);
-    setError(null);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
@@ -50,31 +93,32 @@ export default function Home() {
 
       const data: NavigateResponse = await response.json();
 
-      if (data.error) {
-        setError(data.error);
-        setInstructions([]);
-        setRoute([]);
-        setTurnPoints([]);
-      } else if (data.instructions.length === 0) {
-        setError('Keine Navigationsanweisungen verfügbar');
-        setInstructions([]);
-        setRoute([]);
-        setTurnPoints([]);
-      } else {
-        setInstructions(data.instructions);
-        setRoute(data.route || []);
-        setTurnPoints(data.turn_points || []);
-        setError(null);
-      }
+      // Replace loading message with result
+      setMessages(prev => prev.map(msg =>
+        msg.id === loadingId
+          ? {
+              ...msg,
+              isLoading: false,
+              content: data.error || '',
+              instructions: data.error ? undefined : data.instructions,
+              route: data.route,
+              turnPoints: data.turn_points,
+              startInside: data.start_inside,
+              endInside: data.end_inside,
+              error: data.error || undefined,
+            }
+          : msg
+      ));
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        setError('Anfrage hat zu lange gedauert. Bitte versuchen Sie es erneut.');
-      } else {
-        setError('Verbindung zum Server fehlgeschlagen. Bitte versuchen Sie es erneut.');
-      }
-      setInstructions([]);
-      setRoute([]);
-      setTurnPoints([]);
+      const errorMsg = err instanceof DOMException && err.name === 'AbortError'
+        ? 'Die Anfrage hat zu lange gedauert. Versuch es nochmal.'
+        : 'Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
+
+      setMessages(prev => prev.map(msg =>
+        msg.id === loadingId
+          ? { ...msg, isLoading: false, content: errorMsg, error: errorMsg }
+          : msg
+      ));
     } finally {
       clearTimeout(timeoutId);
       setIsLoading(false);
@@ -82,56 +126,31 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen flex flex-col items-center p-4">
-      <div className="w-full max-w-2xl space-y-6 mt-8">
-        <h1 className="text-3xl font-bold text-center">
-          DB Indoor Navigation
-        </h1>
-        <p className="text-center text-gray-600 mb-4">
-          Navigieren Sie innerhalb von Bahnhöfen mit natürlicher Sprache.
-        </p>
+    <div className="h-full flex flex-col max-w-lg mx-auto bg-[var(--surface-chat)] shadow-xl">
+      {/* Header */}
+      <ChatHeader
+        selectedZoneID={selectedZoneID}
+        selectedStationName={selectedStationName}
+        handicapped={handicapped}
+        onStationChange={handleStationChange}
+        onHandicappedChange={setHandicapped}
+      />
 
-        <StationSelector
-          onStationChange={setSelectedZoneID}
-          selectedZoneID={selectedZoneID}
-        />
+      {/* Messages area */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        {messages.map(msg => (
+          <ChatMessageBubble key={msg.id} message={msg} />
+        ))}
 
-        <NavigationInput
-          zoneID={selectedZoneID}
-          onSubmit={handleSubmit}
-          isLoading={isLoading}
-        />
-
-        <div className="flex items-center gap-3">
-          <label htmlFor="handicapped-toggle" className="text-sm font-medium cursor-pointer">
-            Barrierefreie Route
-          </label>
-          <button
-            id="handicapped-toggle"
-            role="switch"
-            type="button"
-            aria-checked={handicapped}
-            onClick={() => setHandicapped(!handicapped)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-              handicapped ? 'bg-blue-600' : 'bg-gray-300'
-            }`}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                handicapped ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
-          </button>
-        </div>
-
-        <RouteMap route={route} turnPoints={turnPoints} />
-
-        <NavigationResults
-          instructions={instructions}
-          error={error}
-          isLoading={isLoading}
-        />
+        <div ref={messagesEndRef} />
       </div>
-    </main>
+
+      {/* Input area */}
+      <ChatInput
+        onSend={handleSend}
+        isLoading={isLoading}
+        disabled={!selectedZoneID}
+      />
+    </div>
   );
 }

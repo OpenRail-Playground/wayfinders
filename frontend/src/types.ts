@@ -29,6 +29,8 @@ export interface NavigateResponse {
   instructions: string[];
   route: RouteSegment[];
   turn_points: TurnPoint[];
+  start_inside: boolean;
+  end_inside: boolean;
   error?: string;
 }
 
@@ -37,4 +39,19 @@ export interface StationListResponse {
     zoneID: string;
     name: string;
   }>;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  image?: string;
+  instructions?: string[];
+  route?: RouteSegment[];
+  turnPoints?: TurnPoint[];
+  startInside?: boolean;
+  endInside?: boolean;
+  error?: string;
+  isLoading?: boolean;
 }

@@ -1,9 +1,23 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DB Indoor Navigation",
-  description: "Indoor-Navigationsassistent für Deutsche Bahn Bahnhöfe",
+  title: "DB Wayfinder",
+  description: "Navigationsassistent für Deutsche Bahn Bahnhöfe",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "DB Wayfinder",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -13,7 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="de">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased h-full">{children}</body>
     </html>
   );
 }
