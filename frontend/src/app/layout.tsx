@@ -2,13 +2,13 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DB Wayfinder",
+  title: "Station Wayfinder",
   description: "Navigationsassistent für Deutsche Bahn Bahnhöfe",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "DB Wayfinder",
+    title: "Station Wayfinder",
   },
 };
 

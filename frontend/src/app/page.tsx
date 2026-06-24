@@ -20,7 +20,7 @@ export default function Home() {
       {
         id: 'welcome',
         role: 'assistant',
-        content: 'Hallo! 👋 Ich helfe dir, dich im Bahnhof zurechtzufinden. Wähle oben einen Bahnhof aus und sag mir, wohin du möchtest.',
+        content: 'Hallo! 👋 Ich navigiere dich durch den Bahnhof.\n\nSag mir einfach wo du bist und wo du hin möchtest — z.B. "Ich bin am Gleis 5 und suche den Starbucks".\n\n📸 Tipp: Du kannst auch ein Foto von deinem Standort machen! Drücke das Kamera-Symbol unten links.',
         timestamp: new Date(),
       },
     ]);

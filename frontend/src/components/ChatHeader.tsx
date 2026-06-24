@@ -131,7 +131,7 @@ export default function ChatHeader({
               </svg>
             </div>
             <div>
-              <h1 className="text-white font-bold text-[15px] leading-tight">DB Wayfinder</h1>
+              <h1 className="text-white font-bold text-[15px] leading-tight">Station Wayfinder</h1>
             </div>
           </div>
 

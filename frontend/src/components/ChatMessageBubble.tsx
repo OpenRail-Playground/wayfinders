@@ -106,7 +106,7 @@ export default function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
   return (
     <div className="flex justify-start animate-fade-in-up">
       <div className="max-w-[80%] px-4 py-3 rounded-2xl rounded-bl-sm bg-white border border-[#ddd] shadow-sm">
-        <p className="text-[14px] text-[#111] leading-relaxed font-medium">{message.content}</p>
+        <p className="text-[14px] text-[#111] leading-relaxed font-medium whitespace-pre-line">{message.content}</p>
       </div>
     </div>
   );

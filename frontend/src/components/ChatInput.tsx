@@ -111,7 +111,7 @@ export default function ChatInput({ onSend, isLoading, disabled }: ChatInputProp
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={disabled ? 'Wähle einen Bahnhof...' : 'Wohin möchtest du?'}
+          placeholder={disabled ? 'Wähle einen Bahnhof...' : 'z.B. "Wo ist der nächste Ausgang?"'}
           disabled={disabled || isLoading}
           className="flex-1 h-11 px-4 bg-[#f7f7f7] border border-[#d0d0d0] rounded-full text-[14px] text-[#111] font-medium placeholder:text-[#999] placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-[#e30613]/30 focus:border-[#e30613] disabled:opacity-40 transition-all"
         />

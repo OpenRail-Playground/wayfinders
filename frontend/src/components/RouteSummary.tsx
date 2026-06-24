@@ -208,7 +208,6 @@ export default function RouteSummary({ route, instructions, startInside, endInsi
               {levelChanges}×
             </span>
           )}
-          <span>{instructions.length} Schritte</span>
         </div>
       </div>
     </div>
