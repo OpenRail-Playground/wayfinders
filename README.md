@@ -1,6 +1,12 @@
-# Our Cool Project
+# A Spatial AI Wayfinding Agent for Railway Stations
 
-<!-- TODO: Shortly explain what this project is about -->
+This project implements LLM-enhanced indoor navigation in railway stations that enables navigation using natural language input and output. Users can specify their navigation request in free-form text and receive a textual step-by-step description of the route based on POIs as landmarks in the station.
+
+LLM-based processing steps translate
+- the user's request into start and destination geographical coordinates and levels
+- the found geographical route into a list of instructions that reference easily visible waypoints for the user to orient himself.
+
+The routing itself relies on an existing routing API.
 
 ## Background
 
@@ -16,6 +22,8 @@ This project has been initiated during the [Hack4Rail 2026](https://hack4rail.or
 
 - Python 3.10+
 - Node.js 18+
+
+As-is, this code base only works within the VPN of Deutsche Bahn and with suitable API keys for calling the DB GenAI Hub (which provides the LLMs to use) and the RIS-Maps API.
 
 ### Environment variables
 
