@@ -69,9 +69,6 @@ export default function Home() {
 
     setIsLoading(true);
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-
     try {
       const requestBody: Record<string, unknown> = {
         zoneID: selectedZoneID,
@@ -88,7 +85,6 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
-        signal: controller.signal,
       });
 
       const data: NavigateResponse = await response.json();
@@ -109,18 +105,13 @@ export default function Home() {
             }
           : msg
       ));
-    } catch (err) {
-      const errorMsg = err instanceof DOMException && err.name === 'AbortError'
-        ? 'Die Anfrage hat zu lange gedauert. Versuch es nochmal.'
-        : 'Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.';
-
+    } catch {
       setMessages(prev => prev.map(msg =>
         msg.id === loadingId
-          ? { ...msg, isLoading: false, content: errorMsg, error: errorMsg }
+          ? { ...msg, isLoading: false, content: 'Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.', error: 'Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung.' }
           : msg
       ));
     } finally {
-      clearTimeout(timeoutId);
       setIsLoading(false);
     }
   }
